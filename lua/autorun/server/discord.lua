@@ -240,10 +240,10 @@ local OPCodes = {
 				status = status || "online",
 				game = {
 					name = nameStr || "online",
-					type = type && tonumber( type ) || 0,
+					type = isnumber( type ) || 0,
 				},
 				afk = false,
-				since = JSON.null, -- "since" is not used on discord bots.
+				since = "null", -- "since" is not used on discord bots.
 			}
 		end
 	},
@@ -252,7 +252,7 @@ local OPCodes = {
 		-- No action required.
 	},
 	[6] = {
-		Name = "Resume",
+		Name = "Resume-request",
 		Action = function(self)
 			return {
 				token = self.token,
@@ -262,8 +262,11 @@ local OPCodes = {
 		end
 	},
 	[7] = {
-		Name = "reconnect"
-		// TODO: finish this function
+		Name = "reconnect",
+		Action = function(self)
+			self:setStatus("reconnect-resume")
+			self:close()
+		end
 	},
 	[8] = {
 		Name = "Request-Guild-Members",
@@ -277,8 +280,13 @@ local OPCodes = {
 	},
 	[9] = {
 		Name = "Invalid-session",
-		Action = function(self)
-			// STATUS SET TO KILLED
+		Action = function(self, resume)
+			if resume then
+				self:setStatus("reconnect-resume")
+				self:closeNow()
+				return
+			end
+			self:setStatus("reconnect")
 			self:closeNow()
 		end
 	},
@@ -294,6 +302,10 @@ local OPCodes = {
 			self.heart.interval = tab.heartbeat_interval / 1000
 			self.heart.active = true
 			self:startHeartBeat()
+			if self:getStatus() == "reconnect-resume" then
+				self:say(6)
+				return
+			end
 			self:say(2)
 		end
 	}
@@ -315,13 +327,23 @@ local ievents = {
     	self:close()
     end,
     ["READY"] = function(self, tab)
-        self.user = tab.user
+        self.user = setmetatable(tab.user, Discord.Objects.members)
+        if self:getStatus() == "reconnect-resume" then
+        	self:say(6)
+        	return
+        end
+        self:setStatus("active")
+        self.__attempts = 0
         self.guilds = {}
         self.session_id = tab.session_id
         for i = 1, #tab.guilds do
         	self.guilds[ tab.guilds[i]["id"] ] = {stub = true}
         end
         // TODO: Data handler section
+    end,
+    ["RESUMED"] = function(self)
+    	self:setStatus("active")
+    	self.__attempts = 0
     end,
 
 	--[[
@@ -332,6 +354,7 @@ local ievents = {
     	self.guilds[ tab["id"] ] = tab
     	self.guilds[ tab["id"] ]["unavailable"] = nil
     	self.guilds[ tab["id"] ]["ref"] = table.Merge({guild = tab.id}, self.ref)
+    	self.guilds[ tab["id"] ]["events"] = {}
     	setmetatable(self.guilds[ tab["id"] ], Discord.Objects.DiscordGuild)
 
     	self.guilds[ tab["id"] ]()
@@ -349,7 +372,7 @@ local ievents = {
     ["GUILD_BAN_ADD"] = function(self, tab)
     	local tab = setmetatable(tab["user"], Discord.Objects.members)
     	self.guilds[ tab["guild_id"] ]["banlist"][ tab["user"]["id"] ] = tab
-    	return tab
+    	return self.guilds[ tab["guild_id"] ]["banlist"][ tab["user"]["id"] ]
     end,
     ["GUILD_BAN_REMOVE"] = function(self, tab)
     	self.guilds[ tab["guild_id"] ]["banlist"][ tab["user"]["id"] ] = nil
@@ -362,7 +385,7 @@ local ievents = {
  		table.insert(tab, guild["ref"])
  		local tab = setmetatable(tab, Discord.Objects.channels)
  		guild.channels[ tab.id ] = tab
- 		return tab
+ 		return guild.channels[ tab.id ]
 
     end,
     ["CHANNEL_UPDATE"] = function(self, tab)
@@ -382,30 +405,56 @@ local ievents = {
     	table.insert(tab, guild["ref"])
     	local tab = setmetatable(tab, Discord.Objects.members)
     	guild.members[ tab["id"] ] = tab
-    	return tab
+    	return guild.members[ tab["id"] ]
     end,
     ["GUILD_MEMBER_UPDATE"] = function(self, tab)
     	local guild = self.guilds[ tab["guild_id"] ]
  		table.Merge(guild.members[ tab.user.id ], tab)
- 		return tab 	
+ 		return guild.members[ tab.user.id ]
     end,
     ["GUILD_MEMBER_REMOVE"] = function(self, tab)
      	local guild = self.guilds[ tab["guild_id"] ]
  		guild.members[ tab.id ] = nil
     end,
-    ["GUILD_MEMBERS_CUNK"] = function(self, tab)
+    ["GUILD_MEMBERS_CHUNK"] = function(self, tab)
     	local guild = self.guilds[ tab["guild_id"] ]
     	for k,v in pairs(tab.members) do
     		table.insert(v, guild["ref"])
-    		guild.members[ v["id"] ] = setmetatable(v, Discord.Objects.members)
+    		guild.members[ v["user"]["id"] ] = setmetatable(v, Discord.Objects.members)
     	end
-    	return
+    end,
+    ["USER_UPDATE"] = function(self, tab)
+    	table.Merge(self.user, tab)
+    	return self.user
+    end,
+    --[[
+    	Message
+    ]]
+    ["MESSAGE_CREATE"] = function(self, tab)
+    	local guild = self.guilds[ tab["guild_id"] ]
+ 		tab["ref"] = table.Copy(guild["ref"])
+		tab["getUser"] = function() return Discord.Clients[ tab.ref["usr"] ] end
+		tab["getGuild"] = function() return Discord.Clients[ tab.ref["usr"] ].guilds[ tab.ref["guild"] ] end
+ 		local tab = setmetatable(tab, Discord.Objects.messages)
+ 		guild.channels[ tab.channel_id ].messages[ tab.id ] = tab
+ 		return guild.channels[ tab.channel_id ].messages[ tab.id ]
+    end,
+    ["MESSAGE_UPDATE"] = function(self, tab)
+    	local guild = self.guilds[ tab["guild_id"] ]
+    	local msgLoc = guild.channels[ tab.channel_id ].messages
+    	if msgLoc[tab.id] then
+    		table.Merge(msgLoc[tab.id], tab)
+    	else
+    		msgLoc[tab.id] = setmetatable(tab, Discord.Objects.messages)
+    	end
+    	return msgLoc[ tab.id ]
     end,
 }
 
 --[[
-	Socket Object
+    Client
 ]]
+
 
 local Client = Internal:newObject("Client", function(self, name)
     assert(isstring(name), "Bad arugment #1, unique name (string) required, got" .. type(name) .. ".", false)
@@ -418,7 +467,6 @@ local Client = Internal:newObject("Client", function(self, name)
     return Discord.Clients[name]
 end)
 
-
 Client:defaultValues({
 	heart = {
 		val = 0,
@@ -427,61 +475,99 @@ Client:defaultValues({
 	   	lastBeat = 0,
 	},
 	__status = {
-		["Killed"] = -1,
-		["Closed"] = 0,
-		["Identifying"] = 1,
-		["Open"] = 2,
-		["Reconnect"] = 3,
+		["off"] = -1,
+		["reconnect"] = 0,
+		["reconnect-resume"] = 1,
+		["active"] = 2,
+		["stopping"] = 3,
 	},
-	status = 0,
+	status = "off",
 	session_id = "",
 	token = "",
 	OP = table.Copy(OPCodes),
-    events = {},
+	events = {},
+    __attempts = 0,
     __endpoint = "https://sbmrp.com/hcon/test2.php",
     __events = table.Copy(ievents),
     __tasks = {["all"] = {lastreset = SysTime(), reset = 1, count = 0, max = 50}},
 })
 
-function Client:active()
+
+-- accessor functions
+
+function Client:getStatus()
+	return self.status
+end
+
+
+function Client:isActive()
 	return self.status > 0
 end
+
+function Client:getToken()
+	return self.token
+end
+
+function Client:getGuilds()
+	return self.guilds
+end
+
+function Client:getGuild(str)
+	if self.guilds[ str ] then
+		return self.guilds[str]
+	else
+		for k,v in pairs(self.guilds) do
+			if v:getName() == str then
+				return v
+			end
+		end
+	end
+	return false
+end
+
+-- mutator
+
+function Client:setStatus(str)
+	assert(isstring(str), "Bad argument #1, string expected, got " .. type(str) .. ".")
+	assert(self.__status[ str ], "Bad argument #1, not a valid status!")
+	Internal:Output("Status", "Status changed: " .. self.status .. " --> " .. str)
+	self.status = str
+
+end
+
+
+function Client:setToken(str)
+	assert(isstring(str) && #str == 59, "Bad argument #1, token required!")
+	self.token = str
+end
+
 
 function Client:say(opCode, ...)
 	if self.OP[ opCode ] then
 		local payload = self.OP[ opCode ].Action(self, ...)
-        Internal:Output("Gateway", "To Discord [" .. opCode .. "]")
-		self:write(JSON.encode({
+        Internal:Output("OPCodes", "To Discord [" .. opCode .. "] " .. self.OP[ opCode ].Name)
+        local msg = {
 			op = opCode,
 			d = payload
-		}))
+		}
+		self:write(util.TableToJSON(msg):Replace(".0", ""))
 	end
 end
 
 function Client:dispatch(_, event)
-    Internal:Output("Gateway","FROM DISCORD: " .. event.op  .. " [" .. (event.t || "Unknown") .. "]" )
+    Internal:Output("Event","From Discord: " .. event.op  .. " [" .. (event.t || "Unknown") .. "]" )
+    local override = nil
    if self.__events[event.t] then
-       self.__events[event.t](self, event.d)
+        override = self.__events[event.t](self, event.d)
    end
    // Todo: client end event handler
    if self.events[event.t] then
-       self.events[event.t](self, event.d)
+         self.events[event.t](self, override || event.d)
    end
+   file.Write("dump.txt", util.TableToJSON(self.guilds, true))
 end
 
-local validStatus = {
-	["IDLE"] = true,
-	["LIMITED"] = true,
-	["ACTIVE"] = true,
-	["RECONNECT"] = true,
-	["DEAD"] = true,
-}
 
-function Client:status(status)
-	if !status then return self.__status end
-	if !validStatus[ status:Upper() ] then return end
-	self.__status = status:Upper()
-end
 
 local function checkRate(self, e)
 	local s = SysTime()
@@ -562,17 +648,25 @@ function Client:startHeartBeat()
 	self.stopHeartBeat = heartProcess
 end
 
---[[
-    Client
-]]
-
-function Client:run(token)
-  assert(token && tostring(token), "You must provide a token!")
-
-  self:closeNow()
-  self.token = token
-  self:open()
+function Client:stop()
+	self:setStatus("off")
+	self:close()
 end
+
+
+
+function Client:start()
+	local st = self:getStatus()
+	if st == "active" || st == "off" || self.__attempts > 1 then
+		self:closeNow()
+		self:setStatus("reconnect")
+	end
+	self.__attempts = self.__attempts + 1
+	self:open()
+end
+
+
+
 
 function Client:updateSelf(nameStr, type, status)
   return self:say(3, nameStr, type, status)
@@ -589,31 +683,39 @@ function Client:onConnected()
 end
 
 function Client:onDisconnected()
-    Internal:Output("Gateway","Closed by connection.")
+    Internal:Output("Gateway","Socket closed.")
+    self:stopHeartBeat()
+    if self:getStatus() == "off" then return end
+    if self.__attempts > 3 then
+    	Internal:Output("Gateway", "Critical failure, failed to connect after three tries. Stopping relay.")
+    	self:setStatus("off")
+    	return
+    elseif self.__attempts == 0 && self:getStatus() == "active" then
+    	self:setStatus("reconnect-resume")
+    	Internal:Output("Gateway","Attempting to resume previous connection.")
+    end
+    timer.Simple(1, function()
+		Internal:Output("Gateway","Opening socket.")
+    	self:start()
+    end)
+    
 end
 
 function Client:onMessage(msg)
-    local res = JSON.decode(msg)
+    local res = util.JSONToTable(msg)
     --print("FROM DISCORD: " .. res.op  .. " [" .. (res.t || "Unknown") .. "]" )
     if self.OP[res.op] then
+    	Internal:Output("OPCode", "From Discord: " .. res.op  .. " [" .. (self.OP[res.op].Name || "Unknown") .. "]" )
         self.OP[res.op].Action(self, (res.t && res) || res.d)
     end
     self.heart.val = res.s || self.heart.val
 end
 
-function Client:getGuild(str)
-	if self.guilds[ str ] then
-		return self.guilds[str]
-	else
-		for k,v in pairs(self.guilds) do
-			if v:getName() == str then
-				return v
-			end
-		end
-	end
-	return false
+function Client:addEvent(event, func)
+	assert(isstring(event), "Bad argument #1, string expected, got " .. type(event) .. ".")
+	assert(isfunction(func), "Bad argument #1, function expected, got " .. type(event) .. ".")
+	self.events[ event:upper():Replace(" ", "_") ] = func
 end
-
 --[[-------------------------------------------------------------------------
 Discord Objects
 ---------------------------------------------------------------------------]]
@@ -625,6 +727,7 @@ Discord Objects
 
 local Guild = Internal:newObject("DiscordGuild")
 
+
 local function scanTable(tab)
 	for k,v in pairs(tab) do
 		if istable(v) then
@@ -635,6 +738,8 @@ local function scanTable(tab)
 			for x,o in pairs(v) do
 				if !istable(o) then continue end
 				o["ref"] = tab.ref
+				o["getUser"] = function() return Discord.Clients[ tab.ref["usr"] ] end
+				o["getGuild"] = function() return Discord.Clients[ tab.ref["usr"] ].guilds[ tab.ref["guild"] ] end
 				setmetatable(o, Discord.Objects[k])
 			end
 		end
@@ -656,6 +761,11 @@ function Guild:__call()
 				n[ o["user"]["id"] ] = o
 			end
 			self[k] = n
+		end
+		if k == "channels" then
+			for x,o in pairs(v) do
+				o["messages"] = {}
+			end
 		end
 	end
 	return scanTable(self)
@@ -687,6 +797,19 @@ function Guild:getMember(str)
 	return false
 end
 
+function Guild:getRole(str)
+	if self.roles[ str ] then
+		return self.roles[str]
+	else
+		for k,v in pairs(self.roles) do
+			if v:getName() == str then
+				return v
+			end
+		end
+	end
+	return false
+end
+
 function Guild:mainChannel()
 	return self.channels[ self["system_channel_id"] ]
 end
@@ -704,22 +827,7 @@ function Guild:isValid()
 	return !self["unavailable"]
 end
 
-function Guild:getRole(str)
-	if self.roles[ str ] then
-		return self.roles[str]
-	else
-		for k,v in pairs(self.roles) do
-			if v:getName() == str then
-				return v
-			end
-		end
-	end
-	return false
-end
-
---[[
-	Local role (for creating a new role)
-]]
+-- mutator functions
 
 
 
@@ -861,6 +969,26 @@ function Channel:getPos()
 	return self.position
 end
 
+function Channel:getMessage(id, cb)
+	if self.messages[ id ] then
+		cb(self.messages[id])
+		return
+	end
+
+end
+
+
+function Channel:getPermissions()
+	local ret = {}
+	for k,v in pairs(self.permission_overwrites) do
+		ret[ k ] = table.Copy(v)
+		ret[k]["allow"] = API.translatePermission(ret[k]["allow"])
+		ret[k]["deny"] = API.translatePermission(ret[k]["deny"])
+	end
+	return ret
+end
+
+
 function Channel:latestMessage()
 	// TODO
 	return
@@ -933,6 +1061,22 @@ function Channel:edit(tab)
 	end
 end
 
+function Channel:create(cb)
+	local newRole = {
+		permissions = self.permissions || 0,
+		name = self.name || "new role",
+		type = self.type || 0,
+	}
+	local user, gld = Discord.Clients[ self.guild["ref"]["usr"] ],self.guild
+	self.user:HTTP("guilds/" .. self.guild:getID() .. "/roles", "POST", newRole, function(a, b)
+		if a != 200 then return end
+		local retRole = setmetatable(util.JSONToTable(b), Discord.Objects.roles)
+		if cb then
+			cb(retRole)
+		end
+	end)
+end
+
 --[[
 	Emote object
 ]]
@@ -961,615 +1105,24 @@ function Presence:test()
 	PrintTable(self)
 end
 
+--[[
+	Message Object
+]]
+local Message = Internal:newObject("messages", function(self, guild)
+	assert(guild && guild.name, "Bad argument #1, expected guild object.")
+	return setmetatable({guild = guild, isLocal = true}, Discord.Objects.messages)
+end)
 
---[[-------------------------------------------------------------------------
-Third Party
----------------------------------------------------------------------------]]
+-- accessor functions
 
---[==[
-
-David Kolf's JSON module for Lua 5.1/5.2
-
-Version 2.5
-
-
-For the documentation see the corresponding readme.txt or visit
-<http://dkolf.de/src/dkjson-lua.fsl/>.
-
-You can contact the author by sending an e-mail to 'david' at the
-domain 'dkolf.de'.
-
-
-Copyright (C) 2010-2014 David Heiko Kolf
-
-Permission is hereby granted, free of charge, to any person obtaining
-a copy of this software and associated documentation files (the
-"Software"), to deal in the Software without restriction, including
-without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to
-permit persons to whom the Software is furnished to do so, subject to
-the following conditions:
-
-The above copyright notice and this permission notice shall be
-included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
-BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
-ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
---]==]
-print("Discord.glua initalized.")
-JSON = {}
-
--- global dependencies:
-local pairs, type, tostring, tonumber, getmetatable, setmetatable, rawset =
-      pairs, type, tostring, tonumber, debug.getmetatable, setmetatable, rawset
-local error, require, pcall, select = error, require, pcall, select
-local floor, huge = math.floor, math.huge
-local strrep, gsub, strsub, strbyte, strchar, strfind, strlen, strformat =
-      string.rep, string.gsub, string.sub, string.byte, string.char,
-      string.find, string.len, string.format
-local strmatch = string.match
-local concat = table.concat
-
--- I don't like creating modules so we'll just add it to our table
--- :ok_hand:, thanks axel.
-setfenv(1, JSON)
-
-version = "dkjson 2.5"
-
-null = setmetatable ({}, {
-  __tojson = function () return "null" end
-})
-
-local function isarray (tbl)
-  local max, n, arraylen = 0, 0, 0
-  for k,v in pairs (tbl) do
-    if k == 'n' and type(v) == 'number' then
-      arraylen = v
-      if v > max then
-        max = v
-      end
-    else
-      if type(k) ~= 'number' or k < 1 or floor(k) ~= k then
-        return false
-      end
-      if k > max then
-        max = k
-      end
-      n = n + 1
-    end
-  end
-  if max > 10 and max > arraylen and max > n * 2 then
-    return false -- don't create an array with too many holes
-  end
-  return true, max
+function Message:getContent()
+	return self.content
 end
 
-local escapecodes = {
-  ["\""] = "\\\"", ["\\"] = "\\\\", ["\b"] = "\\b", ["\f"] = "\\f",
-  ["\n"] = "\\n",  ["\r"] = "\\r",  ["\t"] = "\\t"
-}
-
-local function escapeutf8 (uchar)
-  local value = escapecodes[uchar]
-  if value then
-    return value
-  end
-  local a, b, c, d = strbyte (uchar, 1, 4)
-  a, b, c, d = a or 0, b or 0, c or 0, d or 0
-  if a <= 0x7f then
-    value = a
-  elseif 0xc0 <= a and a <= 0xdf and b >= 0x80 then
-    value = (a - 0xc0) * 0x40 + b - 0x80
-  elseif 0xe0 <= a and a <= 0xef and b >= 0x80 and c >= 0x80 then
-    value = ((a - 0xe0) * 0x40 + b - 0x80) * 0x40 + c - 0x80
-  elseif 0xf0 <= a and a <= 0xf7 and b >= 0x80 and c >= 0x80 and d >= 0x80 then
-    value = (((a - 0xf0) * 0x40 + b - 0x80) * 0x40 + c - 0x80) * 0x40 + d - 0x80
-  else
-    return ""
-  end
-  if value <= 0xffff then
-    return strformat ("\\u%.4x", value)
-  elseif value <= 0x10ffff then
-    -- encode as UTF-16 surrogate pair
-    value = value - 0x10000
-    local highsur, lowsur = 0xD800 + floor (value/0x400), 0xDC00 + (value % 0x400)
-    return strformat ("\\u%.4x\\u%.4x", highsur, lowsur)
-  else
-    return ""
-  end
+function Message:isTTS()
+	return self.tts
 end
 
-local function fsub (str, pattern, repl)
-  -- gsub always builds a new string in a buffer, even when no match
-  -- exists. First using find should be more efficient when most strings
-  -- don't contain the pattern.
-  if strfind (str, pattern) then
-    return gsub (str, pattern, repl)
-  else
-    return str
-  end
+function Message:hasAttachments()
+	return Either(#self.file == 0, false, true)
 end
-
-function quotestring (value)
-  -- based on the regexp "escapable" in https://github.com/douglascrockford/JSON-js
-  value = fsub (value, "[%z\1-\31\"\\\127]", escapeutf8)
-  if strfind (value, "[\194\216\220\225\226\239]") then
-    value = fsub (value, "\194[\128-\159\173]", escapeutf8)
-    value = fsub (value, "\216[\128-\132]", escapeutf8)
-    value = fsub (value, "\220\143", escapeutf8)
-    value = fsub (value, "\225\158[\180\181]", escapeutf8)
-    value = fsub (value, "\226\128[\140-\143\168-\175]", escapeutf8)
-    value = fsub (value, "\226\129[\160-\175]", escapeutf8)
-    value = fsub (value, "\239\187\191", escapeutf8)
-    value = fsub (value, "\239\191[\176-\191]", escapeutf8)
-  end
-  return "\"" .. value .. "\""
-end
-
-local function replace(str, o, n)
-  local i, j = strfind (str, o, 1, true)
-  if i then
-    return strsub(str, 1, i-1) .. n .. strsub(str, j+1, -1)
-  else
-    return str
-  end
-end
-
--- locale independent num2str and str2num functions
-local decpoint, numfilter
-
-local function updatedecpoint ()
-  decpoint = strmatch(tostring(0.5), "([^05+])")
-  -- build a filter that can be used to remove group separators
-  numfilter = "[^0-9%-%+eE" .. gsub(decpoint, "[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0") .. "]+"
-end
-
-updatedecpoint()
-
-local function num2str (num)
-  return replace(fsub(tostring(num), numfilter, ""), decpoint, ".")
-end
-
-local function str2num (str)
-  local num = tonumber(replace(str, ".", decpoint))
-  if not num then
-    updatedecpoint()
-    num = tonumber(replace(str, ".", decpoint))
-  end
-  return num
-end
-
-local function addnewline2 (level, buffer, buflen)
-  buffer[buflen+1] = "\n"
-  buffer[buflen+2] = strrep ("  ", level)
-  buflen = buflen + 2
-  return buflen
-end
-
-function addnewline (state)
-  if state.indent then
-    state.bufferlen = addnewline2 (state.level or 0,
-                           state.buffer, state.bufferlen or #(state.buffer))
-  end
-end
-
-local encode2 -- forward declaration
-
-local function addpair (key, value, prev, indent, level, buffer, buflen, tables, globalorder, state)
-  local kt = type (key)
-  if kt ~= 'string' and kt ~= 'number' then
-    return nil, "type '" .. kt .. "' is not supported as a key by JSON."
-  end
-  if prev then
-    buflen = buflen + 1
-    buffer[buflen] = ","
-  end
-  if indent then
-    buflen = addnewline2 (level, buffer, buflen)
-  end
-  buffer[buflen+1] = quotestring (key)
-  buffer[buflen+2] = ":"
-  return encode2 (value, indent, level, buffer, buflen + 2, tables, globalorder, state)
-end
-
-local function appendcustom(res, buffer, state)
-  local buflen = state.bufferlen
-  if type (res) == 'string' then
-    buflen = buflen + 1
-    buffer[buflen] = res
-  end
-  return buflen
-end
-
-local function exception(reason, value, state, buffer, buflen, defaultmessage)
-  defaultmessage = defaultmessage or reason
-  local handler = state.exception
-  if not handler then
-    return nil, defaultmessage
-  else
-    state.bufferlen = buflen
-    local ret, msg = handler (reason, value, state, defaultmessage)
-    if not ret then return nil, msg or defaultmessage end
-    return appendcustom(ret, buffer, state)
-  end
-end
-
-function encodeexception(reason, value, state, defaultmessage)
-  return quotestring("<" .. defaultmessage .. ">")
-end
-
-encode2 = function (value, indent, level, buffer, buflen, tables, globalorder, state)
-  local valtype = type (value)
-  local valmeta = getmetatable (value)
-  valmeta = type (valmeta) == 'table' and valmeta -- only tables
-  local valtojson = valmeta and valmeta.__tojson
-  if valtojson then
-    if tables[value] then
-      return exception('reference cycle', value, state, buffer, buflen)
-    end
-    tables[value] = true
-    state.bufferlen = buflen
-    local ret, msg = valtojson (value, state)
-    if not ret then return exception('custom encoder failed', value, state, buffer, buflen, msg) end
-    tables[value] = nil
-    buflen = appendcustom(ret, buffer, state)
-  elseif value == nil then
-    buflen = buflen + 1
-    buffer[buflen] = "null"
-  elseif valtype == 'number' then
-    local s
-    if value ~= value or value >= huge or -value >= huge then
-      -- This is the behaviour of the original JSON implementation.
-      s = "null"
-    else
-      s = num2str (value)
-    end
-    buflen = buflen + 1
-    buffer[buflen] = s
-  elseif valtype == 'boolean' then
-    buflen = buflen + 1
-    buffer[buflen] = value and "true" or "false"
-  elseif valtype == 'string' then
-    buflen = buflen + 1
-    buffer[buflen] = quotestring (value)
-  elseif valtype == 'table' then
-    if tables[value] then
-      return exception('reference cycle', value, state, buffer, buflen)
-    end
-    tables[value] = true
-    level = level + 1
-    local isa, n = isarray (value)
-    if n == 0 and valmeta and valmeta.__jsontype == 'object' then
-      isa = false
-    end
-    local msg
-    if isa then -- JSON array
-      buflen = buflen + 1
-      buffer[buflen] = "["
-      for i = 1, n do
-        buflen, msg = encode2 (value[i], indent, level, buffer, buflen, tables, globalorder, state)
-        if not buflen then return nil, msg end
-        if i < n then
-          buflen = buflen + 1
-          buffer[buflen] = ","
-        end
-      end
-      buflen = buflen + 1
-      buffer[buflen] = "]"
-    else -- JSON object
-      local prev = false
-      buflen = buflen + 1
-      buffer[buflen] = "{"
-      local order = valmeta and valmeta.__jsonorder or globalorder
-      if order then
-        local used = {}
-        n = #order
-        for i = 1, n do
-          local k = order[i]
-          local v = value[k]
-          if v then
-            used[k] = true
-            buflen, msg = addpair (k, v, prev, indent, level, buffer, buflen, tables, globalorder, state)
-            prev = true -- add a seperator before the next element
-          end
-        end
-        for k,v in pairs (value) do
-          if not used[k] then
-            buflen, msg = addpair (k, v, prev, indent, level, buffer, buflen, tables, globalorder, state)
-            if not buflen then return nil, msg end
-            prev = true -- add a seperator before the next element
-          end
-        end
-      else -- unordered
-        for k,v in pairs (value) do
-          buflen, msg = addpair (k, v, prev, indent, level, buffer, buflen, tables, globalorder, state)
-          if not buflen then return nil, msg end
-          prev = true -- add a seperator before the next element
-        end
-      end
-      if indent then
-        buflen = addnewline2 (level - 1, buffer, buflen)
-      end
-      buflen = buflen + 1
-      buffer[buflen] = "}"
-    end
-    tables[value] = nil
-  else
-    return exception ('unsupported type', value, state, buffer, buflen,
-      "type '" .. valtype .. "' is not supported by JSON.")
-  end
-  return buflen
-end
-
-function encode (value, state)
-  state = state or {}
-  local oldbuffer = state.buffer
-  local buffer = oldbuffer or {}
-  state.buffer = buffer
-  updatedecpoint()
-  local ret, msg = encode2 (value, state.indent, state.level or 0,
-                   buffer, state.bufferlen or 0, state.tables or {}, state.keyorder, state)
-  if not ret then
-    error (msg, 2)
-  elseif oldbuffer == buffer then
-    state.bufferlen = ret
-    return true
-  else
-    state.bufferlen = nil
-    state.buffer = nil
-    return concat (buffer)
-  end
-end
-
-local function loc (str, where)
-  local line, pos, linepos = 1, 1, 0
-  while true do
-    pos = strfind (str, "\n", pos, true)
-    if pos and pos < where then
-      line = line + 1
-      linepos = pos
-      pos = pos + 1
-    else
-      break
-    end
-  end
-  return "line " .. line .. ", column " .. (where - linepos)
-end
-
-local function unterminated (str, what, where)
-  return nil, strlen (str) + 1, "unterminated " .. what .. " at " .. loc (str, where)
-end
-
-local function scanwhite (str, pos)
-  while true do
-    pos = strfind (str, "%S", pos)
-    if not pos then return nil end
-    local sub2 = strsub (str, pos, pos + 1)
-    if sub2 == "\239\187" and strsub (str, pos + 2, pos + 2) == "\191" then
-      -- UTF-8 Byte Order Mark
-      pos = pos + 3
-    elseif sub2 == "//" then
-      pos = strfind (str, "[\n\r]", pos + 2)
-      if not pos then return nil end
-    elseif sub2 == "/*" then
-      pos = strfind (str, "*/", pos + 2)
-      if not pos then return nil end
-      pos = pos + 2
-    else
-      return pos
-    end
-  end
-end
-
-local escapechars = {
-  ["\""] = "\"", ["\\"] = "\\", ["/"] = "/", ["b"] = "\b", ["f"] = "\f",
-  ["n"] = "\n", ["r"] = "\r", ["t"] = "\t"
-}
-
-local function unichar (value)
-  if value < 0 then
-    return nil
-  elseif value <= 0x007f then
-    return strchar (value)
-  elseif value <= 0x07ff then
-    return strchar (0xc0 + floor(value/0x40),
-                    0x80 + (floor(value) % 0x40))
-  elseif value <= 0xffff then
-    return strchar (0xe0 + floor(value/0x1000),
-                    0x80 + (floor(value/0x40) % 0x40),
-                    0x80 + (floor(value) % 0x40))
-  elseif value <= 0x10ffff then
-    return strchar (0xf0 + floor(value/0x40000),
-                    0x80 + (floor(value/0x1000) % 0x40),
-                    0x80 + (floor(value/0x40) % 0x40),
-                    0x80 + (floor(value) % 0x40))
-  else
-    return nil
-  end
-end
-
-local function scanstring (str, pos)
-  local lastpos = pos + 1
-  local buffer, n = {}, 0
-  while true do
-    local nextpos = strfind (str, "[\"\\]", lastpos)
-    if not nextpos then
-      return unterminated (str, "string", pos)
-    end
-    if nextpos > lastpos then
-      n = n + 1
-      buffer[n] = strsub (str, lastpos, nextpos - 1)
-    end
-    if strsub (str, nextpos, nextpos) == "\"" then
-      lastpos = nextpos + 1
-      break
-    else
-      local escchar = strsub (str, nextpos + 1, nextpos + 1)
-      local value
-      if escchar == "u" then
-        value = tonumber (strsub (str, nextpos + 2, nextpos + 5), 16)
-        if value then
-          local value2
-          if 0xD800 <= value and value <= 0xDBff then
-            -- we have the high surrogate of UTF-16. Check if there is a
-            -- low surrogate escaped nearby to combine them.
-            if strsub (str, nextpos + 6, nextpos + 7) == "\\u" then
-              value2 = tonumber (strsub (str, nextpos + 8, nextpos + 11), 16)
-              if value2 and 0xDC00 <= value2 and value2 <= 0xDFFF then
-                value = (value - 0xD800)  * 0x400 + (value2 - 0xDC00) + 0x10000
-              else
-                value2 = nil -- in case it was out of range for a low surrogate
-              end
-            end
-          end
-          value = value and unichar (value)
-          if value then
-            if value2 then
-              lastpos = nextpos + 12
-            else
-              lastpos = nextpos + 6
-            end
-          end
-        end
-      end
-      if not value then
-        value = escapechars[escchar] or escchar
-        lastpos = nextpos + 2
-      end
-      n = n + 1
-      buffer[n] = value
-    end
-  end
-  if n == 1 then
-    return buffer[1], lastpos
-  elseif n > 1 then
-    return concat (buffer), lastpos
-  else
-    return "", lastpos
-  end
-end
-
-local scanvalue -- forward declaration
-
-local function scantable (what, closechar, str, startpos, nullval, objectmeta, arraymeta)
-  local len = strlen (str)
-  local tbl, n = {}, 0
-  local pos = startpos + 1
-  if what == 'object' then
-    setmetatable (tbl, objectmeta)
-  else
-    setmetatable (tbl, arraymeta)
-  end
-  while true do
-    pos = scanwhite (str, pos)
-    if not pos then return unterminated (str, what, startpos) end
-    local char = strsub (str, pos, pos)
-    if char == closechar then
-      return tbl, pos + 1
-    end
-    local val1, err
-    val1, pos, err = scanvalue (str, pos, nullval, objectmeta, arraymeta)
-    if err then return nil, pos, err end
-    pos = scanwhite (str, pos)
-    if not pos then return unterminated (str, what, startpos) end
-    char = strsub (str, pos, pos)
-    if char == ":" then
-      if val1 == nil then
-        return nil, pos, "cannot use nil as table index (at " .. loc (str, pos) .. ")"
-      end
-      pos = scanwhite (str, pos + 1)
-      if not pos then return unterminated (str, what, startpos) end
-      local val2
-      val2, pos, err = scanvalue (str, pos, nullval, objectmeta, arraymeta)
-      if err then return nil, pos, err end
-      tbl[val1] = val2
-      pos = scanwhite (str, pos)
-      if not pos then return unterminated (str, what, startpos) end
-      char = strsub (str, pos, pos)
-    else
-      n = n + 1
-      tbl[n] = val1
-    end
-    if char == "," then
-      pos = pos + 1
-    end
-  end
-end
-
-scanvalue = function (str, pos, nullval, objectmeta, arraymeta)
-  pos = pos or 1
-  pos = scanwhite (str, pos)
-  if not pos then
-    return nil, strlen (str) + 1, "no valid JSON value (reached the end)"
-  end
-  local char = strsub (str, pos, pos)
-  if char == "{" then
-    return scantable ('object', "}", str, pos, nullval, objectmeta, arraymeta)
-  elseif char == "[" then
-    return scantable ('array', "]", str, pos, nullval, objectmeta, arraymeta)
-  elseif char == "\"" then
-    return scanstring (str, pos)
-  else
-    local pstart, pend = strfind (str, "^%-?[%d%.]+[eE]?[%+%-]?%d*", pos)
-    if pstart then
-      local number = str2num (strsub (str, pstart, pend))
-      if number then
-        return number, pend + 1
-      end
-    end
-    pstart, pend = strfind (str, "^%a%w*", pos)
-    if pstart then
-      local name = strsub (str, pstart, pend)
-      if name == "true" then
-        return true, pend + 1
-      elseif name == "false" then
-        return false, pend + 1
-      elseif name == "null" then
-        return nullval, pend + 1
-      end
-    end
-    return nil, pos, "no valid JSON value at " .. loc (str, pos)
-  end
-end
-
-local function optionalmetatables(...)
-  if select("#", ...) > 0 then
-    return ...
-  else
-    return {__jsontype = 'object'}, {__jsontype = 'array'}
-  end
-end
-
-function decode (str, pos, nullval, ...)
-  local objectmeta, arraymeta = optionalmetatables(...)
-  return scanvalue (str, pos, nullval, objectmeta, arraymeta)
-end
-
-
-
-
---[[-------------------------------------------------------------------------
-Module loading
----------------------------------------------------------------------------]]
-
---[[local function recursiveLoad(str)
-	local files, dirs = file.Find(str .. "/*", "LUA")
-	for k,v in pairs(files) do
-		include(str .. "/" .. v)
-	end
-	for k,v in pairs(dirs) do
-		recursiveLoad(str .. "/" .. v)
-	end
-end
-
-hook.Add("Initialize", "discord_core-init", function()
-	recursiveLoad("discord_relay")
-	print("Loaded Sirro's discord relay...")
-end)]]--
