@@ -90,6 +90,20 @@ function Internal:Output(realm, str, iserror)
   end
 end
 
+function Internal:verifyAndCallback(c, cb)
+	if !cb || !isfunction(cb) then return end
+	if c == 204 then
+		cb(true)
+	else
+		cb(false)
+	end
+end
+function Internal:defineParents(tab)
+	if !istable( tab ) || !tab["ref"] then return end
+	tab["getUser"] = function() return Discord.Clients[ tab.ref["usr"] ] end
+	tab["getGuild"] = function() return Discord.Clients[ tab.ref["usr"] ].guilds[ tab.ref["guild"] ] end
+end
+
 --[[
 	Shitty discord color format to RGB
 ]]
@@ -314,7 +328,6 @@ local OPCodes = {
 --[[
     Internal events (shit the end user won't need to touch)
 ]]
-
 local ievents = {
 	--[[
 		Status events
@@ -328,10 +341,6 @@ local ievents = {
     end,
     ["READY"] = function(self, tab)
         self.user = setmetatable(tab.user, Discord.Objects.members)
-        if self:getStatus() == "reconnect-resume" then
-        	self:say(6)
-        	return
-        end
         self:setStatus("active")
         self.__attempts = 0
         self.guilds = {}
@@ -355,7 +364,7 @@ local ievents = {
     	self.guilds[ tab["id"] ]["unavailable"] = nil
     	self.guilds[ tab["id"] ]["ref"] = table.Merge({guild = tab.id}, self.ref)
     	self.guilds[ tab["id"] ]["events"] = {}
-    	setmetatable(self.guilds[ tab["id"] ], Discord.Objects.DiscordGuild)
+    	setmetatable(self.guilds[ tab["id"] ], Discord.Objects.guilds)
 
     	self.guilds[ tab["id"] ]()
     	return self.guilds[ tab["id"] ]
@@ -370,7 +379,7 @@ local ievents = {
     	self.guilds[ tab["id"] ]["unavailable"] = true
     end,
     ["GUILD_BAN_ADD"] = function(self, tab)
-    	local tab = setmetatable(tab["user"], Discord.Objects.members)
+    	setmetatable(tab["user"], Discord.Objects.members)
     	self.guilds[ tab["guild_id"] ]["banlist"][ tab["user"]["id"] ] = tab
     	return self.guilds[ tab["guild_id"] ]["banlist"][ tab["user"]["id"] ]
     end,
@@ -383,7 +392,8 @@ local ievents = {
     ["CHANNEL_CREATE"] = function(self, tab)
     	local guild = self.guilds[ tab["guild_id"] ]
  		table.insert(tab, guild["ref"])
- 		local tab = setmetatable(tab, Discord.Objects.channels)
+ 		Internal:defineParents(tab)
+ 		setmetatable(tab, Discord.Objects.channels)
  		guild.channels[ tab.id ] = tab
  		return guild.channels[ tab.id ]
 
@@ -403,7 +413,8 @@ local ievents = {
     ["GUILD_MEMBER_ADD"] = function(self, tab)
     	local guild = self.guilds[ tab["guild_id"] ]
     	table.insert(tab, guild["ref"])
-    	local tab = setmetatable(tab, Discord.Objects.members)
+    	Internal:defineParents(tab)
+    	setmetatable(tab, Discord.Objects.members)
     	guild.members[ tab["id"] ] = tab
     	return guild.members[ tab["id"] ]
     end,
@@ -420,8 +431,18 @@ local ievents = {
     	local guild = self.guilds[ tab["guild_id"] ]
     	for k,v in pairs(tab.members) do
     		table.insert(v, guild["ref"])
-    		guild.members[ v["user"]["id"] ] = setmetatable(v, Discord.Objects.members)
+    		setmetatable(v, Discord.Objects.members)
+    		guild.members[ v["user"]["id"] ] = v
     	end
+    end,
+    ["PRESENCE_UPDATE"] = function(self, tab)
+    	local guild = self.guilds[ tab["guild_id"] ]
+
+    	if guild.presences[ tab.user.id ] then
+	    	table.Merge(guild.presences[ tab.user.id ], tab)
+	    else
+	    	guild.presences[ tab.user.id ] = tab
+	    end
     end,
     ["USER_UPDATE"] = function(self, tab)
     	table.Merge(self.user, tab)
@@ -432,10 +453,9 @@ local ievents = {
     ]]
     ["MESSAGE_CREATE"] = function(self, tab)
     	local guild = self.guilds[ tab["guild_id"] ]
- 		tab["ref"] = table.Copy(guild["ref"])
-		tab["getUser"] = function() return Discord.Clients[ tab.ref["usr"] ] end
-		tab["getGuild"] = function() return Discord.Clients[ tab.ref["usr"] ].guilds[ tab.ref["guild"] ] end
- 		local tab = setmetatable(tab, Discord.Objects.messages)
+		tab["ref"] = table.Copy(guild["ref"])
+		Internal:defineParents(tab)
+ 		setmetatable(tab, Discord.Objects.messages)
  		guild.channels[ tab.channel_id ].messages[ tab.id ] = tab
  		return guild.channels[ tab.channel_id ].messages[ tab.id ]
     end,
@@ -445,9 +465,45 @@ local ievents = {
     	if msgLoc[tab.id] then
     		table.Merge(msgLoc[tab.id], tab)
     	else
-    		msgLoc[tab.id] = setmetatable(tab, Discord.Objects.messages)
+ 			tab["ref"] = table.Copy(guild["ref"])
+ 			Internal:defineParents(tab)
+    		setmetatable(tab, Discord.Objects.messages)
+    		msgLoc[tab.id] = tab
     	end
     	return msgLoc[ tab.id ]
+    end,
+    ["MESSAGE_DELETE"] = function(self, tab)
+    	local guild = self.guilds[ tab["guild_id"] ]
+    	guild.channels[ tab["channel_id"] ].messages[ tab.id ] = nil
+    end,
+    ["MESSAGE_DELETE"] = function(self, tab)
+    	local guild = self.guilds[ tab["guild_id"] ]
+    	for k,v in pairs(tab.ids) do
+    		guild.channels[ tab["channel_id"] ].messages[ v ] = nil
+    	end
+    end,
+    ["MESSAGE_REACTION_ADD"] = function(self, tab)
+    	local guild = self.guilds[ tab["guild_id"] ]
+
+    end,
+    --[[
+    	Roles
+    ]]
+    ["GUILD_ROLE_CREATE"] = function(self, tab)
+    	local guild = self.guilds[ tab["guild_id"] ]
+    	tab["ref"] = table.Copy(guild["ref"])
+    	Internal:defineParents(tab)
+    	setmetatable(tab, Discord.Objects.roles)
+    	guild.roles[ tab.role.id ] = tab.role
+    end,
+    ["GUILD_ROLE_UPDATE"] = function(self, tab)
+    	local guild = self.guilds[ tab["guild_id"] ]
+    	table.Merge(guild.roles[ tab.id ], tab )
+    	return guild.roles[ tab.id ]
+    end,
+    ["GUILD_ROLE_DELETE"] = function(self, tab)
+    	local guild = self.guilds[ tab["guild_id"] ]
+    	guild.roles[ tab.id ] = nil
     end,
 }
 
@@ -725,7 +781,7 @@ Discord Objects
 	Guild object:
 ]]
 
-local Guild = Internal:newObject("DiscordGuild")
+local Guild = Internal:newObject("guilds")
 
 
 local function scanTable(tab)
@@ -738,8 +794,7 @@ local function scanTable(tab)
 			for x,o in pairs(v) do
 				if !istable(o) then continue end
 				o["ref"] = tab.ref
-				o["getUser"] = function() return Discord.Clients[ tab.ref["usr"] ] end
-				o["getGuild"] = function() return Discord.Clients[ tab.ref["usr"] ].guilds[ tab.ref["guild"] ] end
+				Internal:defineParents(o)
 				setmetatable(o, Discord.Objects[k])
 			end
 		end
@@ -755,7 +810,7 @@ function Guild:__call()
 				n[ o["id"] ] = o
 			end
 			self[k] = n
-		elseif k == "members" then
+		elseif k == "members" || k == "presences" then
 			local n = {}
 			for x,o in pairs(v) do
 				n[ o["user"]["id"] ] = o
@@ -790,7 +845,7 @@ function Guild:getMember(str)
 	else
 		for k,v in pairs(self.members) do
 			if v:getName() == str then
-				return str
+				return v
 			end
 		end
 	end
@@ -1091,18 +1146,106 @@ end
 ]]
 local Member = Internal:newObject("members")
 
-function Member:test()
-	PrintTable(self)
+--accessor functions
+function Member:getName()
+	return self.user.username
 end
 
---[[
-	Presence Object
-]]
+function Member:getNick()
+	return self.nick
+end
 
-local Presence = Internal:newObject("presences")
+function Member:getRoles()
+	local roles = {}
+	for k,v in pairs(self.roles) do
+		roles[v] = self:getGuild():getRole( v )
+	end
+	return roles
+end
 
-function Presence:test()
-	PrintTable(self)
+function Member:getTopRole()
+	return self:getGuild():getRole( self.roles[1] || "" )
+end
+
+function Member:hasRole(role)
+	assert(isstring(role), "Bad argument to #1, string expected, got " .. type(role) .. ".")
+	local roles = self:getGuild().roles
+	for k,v in pairs(self.roles) do
+		if v == role || roles[ v ]:getName() == role then
+			return true
+		end
+	end
+	return false
+end
+
+
+
+function Member:getPermissions()
+	local permissions = {}
+	for k,v in pairs(self:getRoles()) do
+		table.Merge(permissions, v:getPermissions())
+	end
+	return permissions
+end
+
+function Member:getDiscrim()
+	return self.user.discriminator
+end
+
+function Member:getID()
+	return self.user.id
+end
+-- mutator functions
+
+function Member:setNick(str)
+	assert(isstring(str), "Bad argument to #1, string expected, got " .. type(str) .. ".")
+	local guild = self:getGuild()
+	self:getUser():HTTP("/guilds/" .. guild:getID() .. "/members/" .. self:getID(), "PATCH", {
+		["nick"] = str,
+	}, function(a, b)
+		Internal:verifyAndCallback(a, cb)
+	end)
+end
+
+
+function Member:addRole(str, cb)
+	assert(isstring(str), "Bad argument to #1, string expected, got " .. type(str) .. ".")
+	local guild = self:getGuild()
+	local role = guild:getRole(str)
+	if role then
+		self:getUser():HTTP("/guilds/" .. guild:getID() .. "/members/" .. self:getID() .. "/roles/" .. role:getID(), "PUT", {}, function(a, b)
+			Internal:verifyAndCallback(a, cb)
+		end)
+	end
+end
+
+function Member:removeRole(str, cb)
+	assert(isstring(str), "Bad argument to #1, string expected, got " .. type(str) .. ".")
+	local guild = self:getGuild()
+	local role = guild:getRole(str)
+	if role then
+		self:getUser():HTTP("/guilds/" .. guild:getID() .. "/members/" .. self:getID() .. "/roles/" .. role:getID(), "DELETE", {}, function(a, b)
+			Internal:verifyAndCallback(a, cb)
+		end)
+	end
+end
+
+function Member:kick(cb)
+	self:getUser():HTTP("/guilds/" .. self:getGuild():getID() .. "/members/" .. self:getID(), "DELETE", {}, function(a, b)
+		Internal:verifyAndCallback(a, cb)
+	end)
+end
+
+function Member:ban(reason, msgDelete, cb)
+	reason = Either(reason && isstring(reason), reason, "Added by Gmod Server.")
+	msgDelete = Either(msgDelete && isnumber(msgDelete), math.Clamp(msgDelete, 0, 7), 0)
+	guild = self:getGuild()
+	self:getUser():HTTP("/guilds/" .. guild:getID() .. "/bans/" .. self:getID(), "PUT", {
+		reason = reason,
+		["delete-message-days"] = msgDelete
+	}, function(a) 
+		Internal:verifyAndCallback(a, cb) 
+	end)
 end
 
 --[[
