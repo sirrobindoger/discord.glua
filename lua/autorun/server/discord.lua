@@ -1,10 +1,6 @@
 --[[-------------------------------------------------------------------------
 Discord.glua
-
-TODO: ADD SIMPLE DOCS AND INTRO HERE
-
-
-
+	Created by Sirro
 ---------------------------------------------------------------------------]]
 
 Discord = Discord || {}
@@ -13,7 +9,7 @@ Discord = Discord || {}
 	Discord.Internal = Discord.Internal || {} -- internal functions and hooks
 	Discord.Clients =  Discord.Clients || {}
 	Discord.Sockets = pcall(require, "gwsockets")
-	Discord.version = "0.1"
+	Discord.version = 1.0
 
 if !Discord.Sockets then 
 	local msg = function(...) return MsgC(Color(255,255,0), ... .. "\n") end
@@ -81,6 +77,7 @@ function Internal:doProcess()
 end
 Internal:newHook("Internal", "Tick", "Think", Internal.doProcess, Discord.Internal)
 
+
 function Internal:Output(realm, str, iserror)
   local tag = "[Discord.glua (alpha) - " .. realm .. "]: " .. str
   if iserror then
@@ -98,11 +95,8 @@ function Internal:verifyAndCallback(c, cb)
 		cb(false)
 	end
 end
-function Internal:defineParents(tab)
-	if !istable( tab ) || !tab["ref"] then return end
-	tab["getUser"] = function() return Discord.Clients[ tab.ref["usr"] ] end
-	tab["getGuild"] = function() return Discord.Clients[ tab.ref["usr"] ].guilds[ tab.ref["guild"] ] end
-end
+
+
 
 --[[
 	Shitty discord color format to RGB
@@ -145,6 +139,17 @@ function Internal:newObject(str, constructor)
         Discord.Objects[str].__index = Discord.Objects[str]
         setmetatable(Discord.Objects[str], {__call = constructor || function() return end})
 		return table.Merge(Discord.Objects[str], defaultObject)
+	end
+end
+
+function Internal:setupObject(tab, ref, metatab)
+	assert(istable(ref) && ref["ref"], "Bad arugment #2, reference table not found!")
+	tab["ref"] = ref["ref"]
+	tab["getUser"] = function() return Discord.Clients[ tab.ref["usr"] ] end
+	tab["getGuild"] = function() return Discord.Clients[ tab.ref["usr"] ].guilds[ tab.ref["guild"] ] end
+	if metatab then
+		assert(Discord.Objects[ metatab ], "Bad arugment #3, invalid metatable.")
+		setmetatable(tab, Discord.Objects[ metatab ])
 	end
 end
 
@@ -390,10 +395,14 @@ local ievents = {
 		Channels
 	]]
     ["CHANNEL_CREATE"] = function(self, tab)
+    	if tab.type == 1 then -- is a DM
+    		Internal:setupObject(tab, self, "channels")
+    		self.directMessages[ tab.id ] = table.Merge(tab, {messages = {}})
+    		return false
+    	end
+    	-- normal message
     	local guild = self.guilds[ tab["guild_id"] ]
- 		table.insert(tab, guild["ref"])
- 		Internal:defineParents(tab)
- 		setmetatable(tab, Discord.Objects.channels)
+ 		Internal:setupObject(tab, guild, "channels")
  		guild.channels[ tab.id ] = tab
  		return guild.channels[ tab.id ]
 
@@ -412,9 +421,7 @@ local ievents = {
     ]]
     ["GUILD_MEMBER_ADD"] = function(self, tab)
     	local guild = self.guilds[ tab["guild_id"] ]
-    	table.insert(tab, guild["ref"])
-    	Internal:defineParents(tab)
-    	setmetatable(tab, Discord.Objects.members)
+		Internal:setupObject(tab, guild, "members")
     	guild.members[ tab["id"] ] = tab
     	return guild.members[ tab["id"] ]
     end,
@@ -430,8 +437,7 @@ local ievents = {
     ["GUILD_MEMBERS_CHUNK"] = function(self, tab)
     	local guild = self.guilds[ tab["guild_id"] ]
     	for k,v in pairs(tab.members) do
-    		table.insert(v, guild["ref"])
-    		setmetatable(v, Discord.Objects.members)
+			Internal:setupObject(tab, guild, "members")
     		guild.members[ v["user"]["id"] ] = v
     	end
     end,
@@ -452,10 +458,14 @@ local ievents = {
     	Message
     ]]
     ["MESSAGE_CREATE"] = function(self, tab)
+    	if !tab["guild_id"] then
+    		Internal:setupObject(tab, self, "messages")
+    		self.directMessages[ tab.channel_id ].messages[ tab.id ] = tab
+    		self:dispatch("MESSAGE_CREATE_DM", tab)
+    		return false
+    	end
     	local guild = self.guilds[ tab["guild_id"] ]
-		tab["ref"] = table.Copy(guild["ref"])
-		Internal:defineParents(tab)
- 		setmetatable(tab, Discord.Objects.messages)
+		Internal:setupObject(tab, guild, "messages")
  		guild.channels[ tab.channel_id ].messages[ tab.id ] = tab
  		return guild.channels[ tab.channel_id ].messages[ tab.id ]
     end,
@@ -465,9 +475,7 @@ local ievents = {
     	if msgLoc[tab.id] then
     		table.Merge(msgLoc[tab.id], tab)
     	else
- 			tab["ref"] = table.Copy(guild["ref"])
- 			Internal:defineParents(tab)
-    		setmetatable(tab, Discord.Objects.messages)
+			Internal:setupObject(tab, guild, "messages")
     		msgLoc[tab.id] = tab
     	end
     	return msgLoc[ tab.id ]
@@ -476,7 +484,7 @@ local ievents = {
     	local guild = self.guilds[ tab["guild_id"] ]
     	guild.channels[ tab["channel_id"] ].messages[ tab.id ] = nil
     end,
-    ["MESSAGE_DELETE"] = function(self, tab)
+    ["MESSAGE_BULK_DELETE"] = function(self, tab)
     	local guild = self.guilds[ tab["guild_id"] ]
     	for k,v in pairs(tab.ids) do
     		guild.channels[ tab["channel_id"] ].messages[ v ] = nil
@@ -491,9 +499,7 @@ local ievents = {
     ]]
     ["GUILD_ROLE_CREATE"] = function(self, tab)
     	local guild = self.guilds[ tab["guild_id"] ]
-    	tab["ref"] = table.Copy(guild["ref"])
-    	Internal:defineParents(tab)
-    	setmetatable(tab, Discord.Objects.roles)
+		Internal:setupObject(tab, guild, "roles")
     	guild.roles[ tab.role.id ] = tab.role
     end,
     ["GUILD_ROLE_UPDATE"] = function(self, tab)
@@ -542,6 +548,7 @@ Client:defaultValues({
 	token = "",
 	OP = table.Copy(OPCodes),
 	events = {},
+	directMessages = {},
     __attempts = 0,
     __endpoint = "https://sbmrp.com/hcon/test2.php",
     __events = table.Copy(ievents),
@@ -610,12 +617,13 @@ function Client:say(opCode, ...)
 	end
 end
 
-function Client:dispatch(_, event)
-    Internal:Output("Event","From Discord: " .. event.op  .. " [" .. (event.t || "Unknown") .. "]" )
+function Client:dispatch(ovr, event)
+    Internal:Output("Event","From Discord: " .. (event.op || "-1") .. " [" .. ((event.t || ovr) || "Unknown") .. "]" )
     local override = nil
    if self.__events[event.t] then
         override = self.__events[event.t](self, event.d)
    end
+   if (override == false) then return end
    // Todo: client end event handler
    if self.events[event.t] then
          self.events[event.t](self, override || event.d)
@@ -670,7 +678,7 @@ function Client:HTTP(e, m, p, c, f, h, t, a)
 	end
 	local t_struct = {
 		method = m,
-		success = function(code,body,head) handleReturn(code,body,head,c) end,
+		success = c,
 		failure = f,
 		body = util.TableToJSON(p, false),
 		url = self.__endpoint,
@@ -703,6 +711,9 @@ function Client:startHeartBeat()
 	heartProcess = Internal:newProcess("socket_heartbeat-" .. SysTime(), self.beat, self) -- runs heartbeat
 	self.stopHeartBeat = heartProcess
 end
+
+Client:
+
 
 function Client:stop()
 	self:setStatus("off")
@@ -762,7 +773,7 @@ function Client:onMessage(msg)
     --print("FROM DISCORD: " .. res.op  .. " [" .. (res.t || "Unknown") .. "]" )
     if self.OP[res.op] then
     	Internal:Output("OPCode", "From Discord: " .. res.op  .. " [" .. (self.OP[res.op].Name || "Unknown") .. "]" )
-        self.OP[res.op].Action(self, (res.t && res) || res.d)
+        self.OP[res.op].Action(self, (res.t && #res.t > 0 && res) || res.d)
     end
     self.heart.val = res.s || self.heart.val
 end
@@ -783,6 +794,13 @@ Discord Objects
 
 local Guild = Internal:newObject("guilds")
 
+--[[
+	--= Internal function, Ignore ==--
+	Params: table
+	Returns: void
+	Automatically scans the guild recursivly
+	and sets up and object it can find
+]]
 
 local function scanTable(tab)
 	for k,v in pairs(tab) do
@@ -793,15 +811,18 @@ local function scanTable(tab)
 		if Discord.Objects[k] then
 			for x,o in pairs(v) do
 				if !istable(o) then continue end
-				o["ref"] = tab.ref
-				Internal:defineParents(o)
-				setmetatable(o, Discord.Objects[k])
+				Internal:setupObject(o, tab, k)
 			end
 		end
 
 	end
 end
-
+--[[
+	--= Internal function, Ignore ==--
+	Params: none
+	Returns: void
+	Formats a raw guild object from discord to discord.glua
+]]
 function Guild:__call()
 	for k,v in pairs(self) do
 		if istable( v ) && ( v[1] && istable(v[1])  && v[1]["id"] ) then
@@ -826,6 +847,12 @@ function Guild:__call()
 	return scanTable(self)
 end
 
+--[[
+	--= Guild -> Get Channel ==--
+	Params: string [channel name or channel ID (id is quicker)]
+	Returns: table [Channel object]
+	Searchs the guild for said input and returns it.
+]]
 function Guild:getChannel(str)
 	if self.channels[ str ] then
 		return self.channels[str]
@@ -839,6 +866,12 @@ function Guild:getChannel(str)
 	return false
 end
 
+--[[
+	--= Guild -> Get Member ==--
+	Params: string [member name or member ID (id is quicker)]
+	Returns: table [Member object]
+	Searchs the guild for said input and returns it.
+]]
 function Guild:getMember(str)
 	if self.members[ str ] then
 		return self.members[str]
@@ -1027,9 +1060,19 @@ end
 function Channel:getMessage(id, cb)
 	if self.messages[ id ] then
 		cb(self.messages[id])
-		return
+		return true
 	end
-
+	self:getUser():HTTP("/channels/" .. self:getID() .. "/messages/" .. id, "GET", {}, function(code, body)
+		local ret = util.JSONToTable(body)
+		if ret["message"] then
+			return false
+		end
+		Internal:setupObject(ret, self, "messages")
+		cb(ret)
+		self.messages[ ret:getID() ] = ret
+		return true
+	end)
+	return false
 end
 
 
@@ -1107,6 +1150,27 @@ function Channel:setPos(num) -- :heymister:
 	self:edit({position = self.position})
 end
 
+function Channel:sendTyping()
+	self:getUser():HTTP("channels/" .. self:getID() .. "/typing", "POST")
+end
+
+function Channel:send(msg, cb)
+	assert(istable(msg), "Bad argument #1, table expected!")
+	local payload = {
+		content = msg.content,
+		tts = msg.tts,
+		embed = msg.embed
+	}
+	self:getUser():HTTP("channels/" .. self:getID() .. "/messages", "POST", payload, function(code, body)
+		if code == 200 then
+			local ret = util.JSONToTable(body)
+			if ret[id] then
+				Internal:setupObject(ret, self, "messages")
+				cb(ret)
+			end
+		end
+	end)
+end
 
 
 function Channel:edit(tab)
@@ -1262,10 +1326,89 @@ function Message:getContent()
 	return self.content
 end
 
+function Message:getID()
+	return self.id
+end
+
 function Message:isTTS()
 	return self.tts
 end
 
+function Message:getAuthor()
+	return self:getGuild():getMember(self.author.id)
+end
+
+function Message:getChannel()
+	return self:getGuild():getChannel(self.channel_id)
+end
+
+
+function Message:mentionedEveryone()
+	return self.mention_everyone || false
+end
+
 function Message:hasAttachments()
 	return Either(#self.file == 0, false, true)
+end
+
+function Message:getAttachment()
+	
+end
+
+function Message:isPinned()
+	return self.pinned
+end
+
+
+local messageTypes = {
+	[1] = "DEFAULT",
+	[2] = "RECIPIENT_ADD",
+	[3] = "RECIPIENT_REMOVE",
+	[4] = "CALL",
+	[5] = "CHANNEL_NAME_CHANGE",
+	[6] = "CHANNEL_ICON_CHANGE",
+	[7] = "CHANNEL_PINNED_MESSAGE",
+	[8] = "GUILD_MEMBER_JOIN",
+	[9] = "USER_PREMIUM_GUILD_SUBSCRIPTION",
+	[10] = "USER_PREMIUM_GUILD_SUBSCRIPTION_TIER_1",
+	[11] = "USER_PREMIUM_GUILD_SUBSCRIPTION_TIER_2",
+	[12] = "USER_PREMIUM_GUILD_SUBSCRIPTION_TIER_3",
+	[13] = "CHANNEL_FOLLOW_ADD",
+}
+function Message:getType()
+	return messageTypes[ self.type + 1 ]
+end
+
+-- Mutator functions
+
+function Message:setContent(str)
+	assert(isstring(str), "Bad argument to #1, string expected, got " .. type(str) .. ".")
+	self.content = str
+end
+
+function Message:setTTS(bool)
+	assert(isbool(bool), "Bad argument to #1, bool expected, got " .. type(str) .. ".")
+	self.tts = tobool(bool)
+end
+
+function Message:setEmbed(embed)
+	self.embed = embed
+end
+--[[
+	Attachment object
+]]
+
+local Attachment = Internal:newObject("attachment")
+
+-- accessor funcs
+function Attachment:getName()
+	return self.filename
+end
+
+function Attachment:getID()
+	return self.id
+end
+
+function Attachment:getURL()
+	return self.url
 end
