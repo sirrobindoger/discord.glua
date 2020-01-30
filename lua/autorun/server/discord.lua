@@ -226,8 +226,7 @@ local OPCodes = {
 		Name = "Dispatch-Event",
 		Action = function(self, tab)
 			if tab.t then
-				tab.t = tab.t:upper()
-				self:dispatch(tab.t, tab)
+				self:dispatch(_, tab)
 			end
 		end
 	},
@@ -259,7 +258,7 @@ local OPCodes = {
 				status = status || "online",
 				game = {
 					name = nameStr || "online",
-					type = isnumber( type ) || 0,
+					type = tonumber( type ) || 0,
 				},
 				afk = false,
 				since = "null", -- "since" is not used on discord bots.
@@ -712,7 +711,6 @@ function Client:startHeartBeat()
 	self.stopHeartBeat = heartProcess
 end
 
-Client:
 
 
 function Client:stop()
@@ -1162,14 +1160,12 @@ function Channel:send(msg, cb)
 		embed = msg.embed
 	}
 	self:getUser():HTTP("channels/" .. self:getID() .. "/messages", "POST", payload, function(code, body)
-		if code == 200 then
-			local ret = util.JSONToTable(body)
-			if ret[id] then
-				Internal:setupObject(ret, self, "messages")
-				cb(ret)
-			end
+		local ret = util.JSONToTable(body)
+		if ret["id"] && cb then
+			Internal:setupObject(ret, self, "messages")
+			cb(ret)
 		end
-	end)
+	end, nil, nil, 5, 5)
 end
 
 
@@ -1393,6 +1389,29 @@ end
 
 function Message:setEmbed(embed)
 	self.embed = embed
+end
+
+function Message:edit(msg, cb)	
+	local payload = {
+		content = istable(msg) && msg.content || msg,
+		embed = istable(msg) && msg.embed || nil,
+	}
+	self:getUser():HTTP("channels/" .. self:getChannel():getID() .. "/messages/" .. self:getID(), "PATCH", payload, function(code, body)
+		if code == 200 then
+			local ret = util.JSONToTable(body)
+			if ret[id] && cb then
+				Internal:setupObject(ret, self, "messages")
+				cb(ret)
+			end
+		end
+	end)
+end
+
+
+function Message:delete(time)
+	timer.Simple(tonumber(time) || 0, function()
+		self:getUser():HTTP("channels/" .. self:getChannel():getID() .. "/messages/" .. self:getID(), "DELETE")
+	end)
 end
 --[[
 	Attachment object
