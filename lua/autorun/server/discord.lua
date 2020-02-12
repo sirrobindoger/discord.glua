@@ -421,8 +421,8 @@ local ievents = {
     ["GUILD_MEMBER_ADD"] = function(self, tab)
     	local guild = self.guilds[ tab["guild_id"] ]
 		Internal:setupObject(tab, guild, "members")
-    	guild.members[ tab["id"] ] = tab
-    	return guild.members[ tab["id"] ]
+    	guild.members[ tab["user"]["id"] ] = tab
+    	return guild.members[ tab["user"]["id"] ]
     end,
     ["GUILD_MEMBER_UPDATE"] = function(self, tab)
     	local guild = self.guilds[ tab["guild_id"] ]
@@ -617,7 +617,7 @@ function Client:say(opCode, ...)
 end
 
 function Client:dispatch(ovr, event)
-    Internal:Output("Event","From Discord: " .. (event.op || "-1") .. " [" .. ((event.t || ovr) || "Unknown") .. "]" )
+    --Internal:Output("Event","From Discord: " .. (event.op || "-1") .. " [" .. ((event.t || ovr) || "Unknown") .. "]" )
     local override = nil
    if self.__events[event.t] then
         override = self.__events[event.t](self, event.d)
@@ -770,7 +770,7 @@ function Client:onMessage(msg)
     local res = util.JSONToTable(msg)
     --print("FROM DISCORD: " .. res.op  .. " [" .. (res.t || "Unknown") .. "]" )
     if self.OP[res.op] then
-    	Internal:Output("OPCode", "From Discord: " .. res.op  .. " [" .. (self.OP[res.op].Name || "Unknown") .. "]" )
+    	--Internal:Output("OPCode", "From Discord: " .. res.op  .. " [" .. (self.OP[res.op].Name || "Unknown") .. "]" )
         self.OP[res.op].Action(self, (res.t && #res.t > 0 && res) || res.d)
     end
     self.heart.val = res.s || self.heart.val
