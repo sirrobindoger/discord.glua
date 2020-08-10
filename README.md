@@ -42,8 +42,15 @@ Updates the profile display of the bot. The type and status-type values are as f
   * offline: Offline (invisible)
 ### void Client:addEvent( string EventName, function Callback)
 This is an important function which allows you to hook your code onto events that happen on discord. The function passed in the 2nd argument will be called whenever the event takes place. The Client object will **always** be passed as the first argument in the callback function, followed by any other object depending on the event. Here all the events you're able to register:
-Event Name | Description
------------- | -------------
-HELLO | Discord first opens a connection, this is before authentication.
-RECONNECT | Discord is requesting the Client to close and open a new connection. (This will be automatically handled internally.)
-READY | After succesfully authenticating with discord, this will be called when the connection is initalize and active.
+Event Name | Objects Passed | Description
+------------ | ------------ | -------------
+HELLO | Null | Discord first opens a connection, this is before authentication.
+RECONNECT | Null | Discord is requesting the Client to close and open a new connection. (This will be automatically handled internally.)
+READY | Null | After succesfully authenticating with discord, this will be called when the connection is initalize and active.
+RESUMED | Null | Follows after RECONNECT and when the reconnection to discord is successful.
+GUILD_CREATE | Guild | When a guild is loaded in after lazy-load, or a guild became avaliable after a outage, or the Client joined a new guild. 
+GUILD_UPDATE | Guild | When a change is made to a guild (ex. name, icon, etc), this event will pass store and pass the new guild with the updated changes.
+GUILD_DELETE | Null | When a Client leaves a guild or a guild is made unavalible by an outage.
+GUILD_BAN_ADD | number | When a member is banned from a discord, their ID will be passed through this function.
+GUILD_BAN_REMOVE | Null | When a member is unbanned from the discord.
+CHANNEL_CREATE | Channel | When a channel is created in a discord or a new DM channel is opened. That channel will be passed.
