@@ -11,7 +11,6 @@ discord.glua is object oriented. This is so you can make multiple bot users runn
 
 ## Client Object
 
-
 ### string Client:getStatus()
 Returns the status of the Client, can be "off", "reconnect", "reconnect-resume", "active", "stopping".
 ### boolean Client:isActive()
@@ -69,4 +68,46 @@ MESSAGE_REACTION_ADD | Null | Not implemented yet.
 GUILD_ROLE_CREATE | Role | When a new role is created in a guild.
 GUILD_ROLE_UPDATE | Role | When a role is updated in a guild.
 GUILD_ROLE_DELETE | Null | When a role is deleted in a guild.
+## Guild object
 
+### Channel Guild:getChannel( string ChannelID/ChannelName )
+The ID or Name of the channel you are looking for can be passed. This will return the found channel in this guild.
+### Member Guild:getMember( string UserID/Username )
+The ID or Name of the channel you are looking for can be passed; though it is encourage you use the user id as collisions are possible. This will return the found Member in this ### Role Guild:getRole( string RoleID/RoleName )
+The ID or Name of the channel you are looking for can be passed. This will return the found Role in this guild.
+### Channel Guild:mainChannel()
+Returns the "main channel" in this guild. Usually this is their #general chat.
+### string Guild:getName()
+Gets the guild name.
+### string Guild:getID()
+Gets the guild's ID.
+### boolean Guild:isValid()
+Returns if the server is avalible, if it is not this is usually due to a discord outage.
+## Role Object 
+
+### Guild Role:getGuild()
+Returns the guild this role exists on.
+### string Role:getName()
+Returns the role's name.
+### string Role:getID()
+Returns the role's ID.
+### Color Role:getColor()
+Returns a color object of the role.
+### boolean Role:IsHoistable()
+Returns if the role is hoisted. (Shown as it's own tab in the member list)
+### boolean Role:isMentionable()
+Returns if the role can be @'d by normal users.
+### table Role:getPermissions()
+Returns a table of all the [permissions](https://discord.com/developers/docs/topics/permissions#permissions-bitwise-permission-flags) this role has.
+### void Role:setColor( [Color](https://wiki.facepunch.com/gmod/Global.Color) )
+Sets the color of the role.
+### void Role:setName( string Name )
+Sets the name of the role.
+### void Role:setHoistable( boolean ShouldBeHoisted )
+Changes if the role is hoisted.
+### void Role:setMentionable( boolean ShouldBeMentioned )
+Changes if the role is mentioned.
+### void Role:setPermissions( table Permissions )
+Toggles any [permissions](https://discord.com/developers/docs/topics/permissions#permissions-bitwise-permission-flags) passed into this table.
+### void Role:remove()
+Deletes the role from the discord guild.
