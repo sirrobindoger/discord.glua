@@ -54,3 +54,19 @@ GUILD_DELETE | Null | When a Client leaves a guild or a guild is made unavalible
 GUILD_BAN_ADD | number | When a member is banned from a discord, their ID will be passed through this function.
 GUILD_BAN_REMOVE | Null | When a member is unbanned from the discord.
 CHANNEL_CREATE | Channel | When a channel is created in a discord or a new DM channel is opened. That channel will be passed.
+CHANNEL_UPDATE | Channel | When a channel is updated.
+CHANNEL_DELETE | Null | When a channel is deleted.
+GUILD_MEMBER_ADD | Member | When a user joins a guild.
+GUILD_MEMBER_UPDATE | Member | When something is change in a user in a guild (ex. nickname, roles, avatar).
+GUILD_MEMBER_REMOVE | Null | When a user leaves a guild.
+GUILD_MEMBERS_CHUNK | table | Usually chunk-loading happens with large servers or when you request members, this will return a table of Members from a spesific guild.
+USER_UPDATE | Client | When the current Client is updated (name, avatar, etc).
+MESSAGE_CREATE | Message | When a new message is posted to a guild or DM.
+MESSAGE_UPDATE | Message | When a message is edited.
+MESSAGE_DELETE | Null | When a message is deleted from a guild or DM.
+MESSAGE_BULK_DELETE | Null | Usually done with things like bot purge commands, this is when multiple messages are deleted at once.
+MESSAGE_REACTION_ADD | Null | Not implemented yet.
+GUILD_ROLE_CREATE | Role | When a new role is created in a guild.
+GUILD_ROLE_UPDATE | Role | When a role is updated in a guild.
+GUILD_ROLE_DELETE | Null | When a role is deleted in a guild.
+
