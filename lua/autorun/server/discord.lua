@@ -110,8 +110,9 @@ end
 	RGB to Shitty discord color format
 ]]
 
+rgb2hex = Discord.Internal.rgb2hex
 function Internal.rgb2hex(col)
-    local color, hex = table.concat({col.r, col.b, col.g}, " "), "0x"
+    local color, hex = table.concat({col.r, col.g, col.b}, " "), "0x"
     for rgb in color:gmatch('%d+') do
         hex = hex .. ('%02X'):format(tonumber(rgb))
     end
@@ -308,12 +309,6 @@ local OPCodes = {
 			self:closeNow()
 		end
 	},
-  [11] = {
-    Name = "heartbeat-return",
-    Action = function(self)
-      self.heart.active = true
-    end
-  },
 	[10] = {
 		Name = "Hello",
 		Action = function(self, tab)
@@ -326,7 +321,13 @@ local OPCodes = {
 			end
 			self:say(2)
 		end
-	}
+	},
+	[11] = {
+		Name = "heartbeat-return",
+		Action = function(self)
+			self.heart.active = true
+		end
+	},
 }
 
 --[[
@@ -431,7 +432,7 @@ local ievents = {
     end,
     ["GUILD_MEMBER_REMOVE"] = function(self, tab)
      	local guild = self.guilds[ tab["guild_id"] ]
- 		guild.members[ tab.id ] = nil
+ 		guild.members[ tab.user.id ] = nil
     end,
     ["GUILD_MEMBERS_CHUNK"] = function(self, tab)
     	local guild = self.guilds[ tab["guild_id"] ]
