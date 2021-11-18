@@ -1,4 +1,4 @@
-# discord.glua
+# discord.glua [Currently Deprecated]
 An API wrapper for Discord written in the Garry's Mod Lua Environment. [WIP]
 
 
