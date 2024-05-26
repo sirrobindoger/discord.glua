@@ -22,6 +22,7 @@ if !Discord.Sockets then
 	Discord = nil
 	return
 end
+--s-dsdsds
 
 local Internal, API, Clients, Meta = 
 	Discord.Internal, Discord.API, Discord.Clients, Discord.Objects
