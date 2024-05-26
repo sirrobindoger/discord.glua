@@ -10,7 +10,7 @@ Discord = Discord || {}
 	Discord.Clients =  Discord.Clients || {}
 	Discord.Sockets = pcall(require, "gwsockets")
 	Discord.version = 1.0
--- TEST
+
 if !Discord.Sockets then 
 	local msg = function(...) return MsgC(Color(255,255,0), ... .. "\n") end
 	msg("--------------------------------------------------")
